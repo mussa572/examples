@@ -121,7 +121,7 @@ For more learning on Kafka Streams API that you can use as a reference while wor
 Environment Setup
 ~~~~~~~~~~~~~~~~~
 
-1. Make sure you have the following pre-requisites, depending on whether you are running |cp| locally or in Docker
+1. Make sure you have the following pre-requisites, depending on whether you are running |cp| locally, in Docker, or with |ccloud|.
 
 Local:
 
@@ -141,6 +141,11 @@ Docker:
 * Docker version 17.06.1-ce
 * Docker Compose version 1.14.0 with Docker Compose file format 2.1
 * In Docker's advanced `settings <https://docs.docker.com/docker-for-mac/#advanced>`__, increase the memory dedicated to Docker to at least 8GB (default is 2GB)
+
+|ccloud|:
+
+* |ccloud| account. The `Confluent Cloud <https://www.confluent.io/confluent-cloud/?utm_source=github&utm_medium=demo&utm_campaign=ch.examples_type.community_content.microservices-orders?>`__ home page can help you get setup with your own account if you do not yet have access.
+* |ccloud| CLI. See :ref:`Install and Configure the Confluent Cloud CLI <cloud-cli-install>`.
 
 2. Clone the `examples GitHub repository <https://github.com/confluentinc/examples>`__:
 
@@ -205,7 +210,13 @@ Running the fully working demo end-to-end provides context for each of the later
 
         docker-compose up -d --build
 
-#. After starting the demo with one of the above two commands, the microservices applications will be running and Kafka topics will have data in them.
+   * If you are running on |ccloud|, then run the full solution (this starts a new |ccloud| based cluster using the :devx-examples:`ccloud stack library|ccloud/ccloud-stack/README.md` of this repository).
+
+     .. sourcecode:: bash
+
+        ./start-ccloud.sh
+
+#. After starting the demo with one of the above commands, the microservices applications will be running and Kafka topics will have data in them.
 
    .. figure:: images/microservices-exercises-combined.png
        :alt: image
@@ -221,6 +232,12 @@ Running the fully working demo end-to-end provides context for each of the later
    .. sourcecode:: bash
 
       ./read-topics-docker.sh
+
+   * If you are running on |ccloud|, you can sample topic data by running:
+
+   .. sourcecode:: bash
+
+      ./read-topics-ccloud.sh
 
 #. The Kibana dashboard is populated by Elasticsearch.
 
