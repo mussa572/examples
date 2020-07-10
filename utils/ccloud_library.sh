@@ -299,16 +299,57 @@ function ccloud::create_and_use_environment() {
   return 0
 }
 
-function ccloud::create_and_use_cluster() {
+################################################################
+# Sets the value of CLUSTER_ID if a cluster is found given the
+# input parameters, return code specifies if cluster found
+# or not
+################################################################
+function ccloud::find_cluster() {
   CLUSTER_NAME=$1
   CLUSTER_CLOUD=$2
   CLUSTER_REGION=$3
 
-  OUTPUT=$(ccloud kafka cluster create "$CLUSTER_NAME" --cloud $CLUSTER_CLOUD --region $CLUSTER_REGION 2>/dev/null)
-  CLUSTER=$(echo "$OUTPUT" | grep '| Id' | awk '{print $4;}')
-  ccloud kafka cluster use $CLUSTER
+  local FOUND_CLUSTER=$(ccloud kafka cluster list -o json | jq -c -r '.[] | select((.name == "'"$CLUSTER_NAME"'") and (.provider == "'"$CLUSTER_CLOUD"'") and (.region == "'"$CLUSTER_REGION"'"))')
+  local FOUND_COUNT=$(echo "$FOUND_CLUSTER" | xargs | wc -l | xargs)
+  [[ $FOUND_COUNT == "1" ]] && {
+      # global variable to return a value
+      echo "$FOUND_CLUSTER" | jq -r .id
+      return 0 
+    } || {
+      return 1
+    }
+}
 
-  echo $CLUSTER
+function ccloud::create_and_use_cluster() {
+  CLUSTER_NAME=$1
+  CLUSTER_CLOUD=$2
+  CLUSTER_REGION=$3
+  
+  OUTPUT=$(ccloud kafka cluster create "$CLUSTER_NAME" --cloud $CLUSTER_CLOUD --region $CLUSTER_REGION 2>&1)
+  if [ $? -eq 0 ]; then 
+    CLUSTER=$(echo "$OUTPUT" | grep '| Id' | awk '{print $4;}')
+    ccloud kafka cluster use $CLUSTER
+    echo $CLUSTER
+  else
+    echo "Error creating cluster: $OUTPUT.  Troubleshoot and try again" 
+    exit 1
+  fi
+
+  return 0
+}
+
+function ccloud::maybe_create_and_use_cluster() {
+  CLUSTER_NAME=$1
+  CLUSTER_CLOUD=$2
+  CLUSTER_REGION=$3
+  CLUSTER_ID=$(ccloud::find_cluster $CLUSTER_NAME $CLUSTER_CLOUD $CLUSTER_REGION)
+  if [ $? -eq 0 ]
+  then
+    ccloud kafka cluster use $CLUSTER_ID
+    echo $CLUSTER_ID
+  else
+    ccloud::create_and_use_cluster "$CLUSTER_NAME" "$CLUSTER_CLOUD" "$CLUSTER_REGION"
+  fi
 
   return 0
 }
