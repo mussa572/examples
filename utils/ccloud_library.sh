@@ -311,8 +311,7 @@ function ccloud::find_cluster() {
 
   local FOUND_CLUSTER=$(ccloud kafka cluster list -o json | jq -c -r '.[] | select((.name == "'"$CLUSTER_NAME"'") and (.provider == "'"$CLUSTER_CLOUD"'") and (.region == "'"$CLUSTER_REGION"'"))')
   local FOUND_COUNT=$(echo "$FOUND_CLUSTER" | xargs | wc -l | xargs)
-  [[ $FOUND_COUNT == "1" ]] && {
-      # global variable to return a value
+  [[ $FOUND_COUNT -eq 1 ]] && {
       echo "$FOUND_CLUSTER" | jq -r .id
       return 0 
     } || {
@@ -377,6 +376,18 @@ function ccloud::enable_schema_registry() {
   return 0
 }
 
+function ccloud::find_credentials_resource() {
+  SERVICE_ACCOUNT_ID=$1
+  RESOURCE=$2
+  local FOUND_CRED=$(ccloud api-key list -o json | jq -c -r 'map(select((.resource_id == "'"$RESOURCE"'") and (.owner = "'"$SERVICE_ACCOUNT_ID"'")))')
+  local FOUND_COUNT=$(echo "$FOUND_CRED" | jq 'length')
+  [[ $FOUND_COUNT -ne 0 ]] && {
+      echo "$FOUND_CRED" | jq -r '.[0].key'
+      return 0 
+    } || {
+      return 1
+    }
+}
 function ccloud::create_credentials_resource() {
   SERVICE_ACCOUNT_ID=$1
   RESOURCE=$2
@@ -389,6 +400,38 @@ function ccloud::create_credentials_resource() {
 
   return 0
 }
+#####################################################################
+# The return from this function will be a colon ':' deliminted 
+#   list, if the api-key is created the second element of the
+#   list will the secret.  If the api-key is being reused
+#   the second element of the list will be empty
+#####################################################################
+function ccloud::maybe_create_credentials_resource() {
+  SERVICE_ACCOUNT_ID=$1
+  RESOURCE=$2
+  
+  local KEY=$(ccloud::find_credentials_resource $SERVICE_ACCOUNT_ID $RESOURCE)
+  [[ -z $KEY ]] && {
+    ccloud::create_credentials_resource $SERVICE_ACCOUNT_ID $RESOURCE
+  } || {
+    echo "$KEY:"; # the secret cannot be retrieved from a found key, caller needs to handle this
+    return 0
+  }
+}
+
+function ccloud::find_ksqldb_app() {
+  KSQLDB_NAME=$1
+  CLUSTER=$2
+
+  local FOUND_APP=$(ccloud ksql app list -o json | jq -c -r 'map(select((.name == "'"$KSQLDB_NAME"'") and (.kafka == "'"$CLUSTER"'")))')
+  local FOUND_COUNT=$(echo "$FOUND_APP" | jq 'length')
+  [[ $FOUND_COUNT -ne 0 ]] && {
+      echo "$FOUND_APP" | jq -r '.[].id'
+      return 0 
+    } || {
+      return 1
+    }
+}
 
 function ccloud::create_ksqldb_app() {
   KSQLDB_NAME=$1
@@ -396,6 +439,20 @@ function ccloud::create_ksqldb_app() {
 
   KSQLDB=$(ccloud ksql app create --cluster $CLUSTER -o json "$KSQLDB_NAME" | jq -r ".id")
   echo $KSQLDB
+
+  return 0
+}
+function ccloud::maybe_create_ksqldb_app() {
+  KSQLDB_NAME=$1
+  CLUSTER=$2
+  
+  APP_ID=$(ccloud::find_ksqldb_app $KSQLDB_NAME $CLUSTER)
+  if [ $? -eq 0 ]
+  then
+    echo $APP_ID
+  else
+    ccloud::create_ksqldb_app "$KSQLDB_NAME" "$CLUSTER"
+  fi
 
   return 0
 }
@@ -806,47 +863,50 @@ function ccloud::create_ccloud_stack() {
   CLUSTER_NAME=${CLUSTER_NAME:-"demo-kafka-cluster-$SERVICE_ACCOUNT_ID"}
   CLUSTER_CLOUD="${CLUSTER_CLOUD:-aws}"
   CLUSTER_REGION="${CLUSTER_REGION:-us-west-2}"
-  CLUSTER=$(ccloud::create_and_use_cluster "$CLUSTER_NAME" $CLUSTER_CLOUD $CLUSTER_REGION)
+  CLUSTER=$(ccloud::maybe_create_and_use_cluster "$CLUSTER_NAME" $CLUSTER_CLOUD $CLUSTER_REGION)
   if [[ "$CLUSTER" == "" ]] ; then
     echo "Kafka cluster id is empty"
     echo "ERROR: Could not create cluster. Please troubleshoot"
     exit 1
   fi
   BOOTSTRAP_SERVERS=$(ccloud kafka cluster describe $CLUSTER -o json | jq -r ".endpoint" | cut -c 12-)
-  CLUSTER_CREDS=$(ccloud::create_credentials_resource $SERVICE_ACCOUNT_ID $CLUSTER)
+  CLUSTER_CREDS=$(ccloud::maybe_create_credentials_resource $SERVICE_ACCOUNT_ID $CLUSTER)
 
   MAX_WAIT=720
   echo "Waiting up to $MAX_WAIT seconds for Confluent Cloud cluster to be ready and for credentials to propagate"
   ccloud::retry $MAX_WAIT ccloud::validate_ccloud_cluster_ready || exit 1
+
   # Estimating another 80s wait still sometimes required
-  echo "Sleeping an additional 80s to ensure propagation of all metadata"
-  sleep 80
+  WARMUP_TIME=${WARMUP_TIME:-80}
+  echo "Sleeping an additional ${WARMUP_TIME} seconds to ensure propagation of all metadata"
+  sleep $WARMUP_TIME 
 
   SCHEMA_REGISTRY_GEO="${SCHEMA_REGISTRY_GEO:-us}"
   SCHEMA_REGISTRY=$(ccloud::enable_schema_registry $CLUSTER_CLOUD $SCHEMA_REGISTRY_GEO)
   SCHEMA_REGISTRY_ENDPOINT=$(ccloud schema-registry cluster describe -o json | jq -r ".endpoint_url")
-  SCHEMA_REGISTRY_CREDS=$(ccloud::create_credentials_resource $SERVICE_ACCOUNT_ID $SCHEMA_REGISTRY)
-
+  SCHEMA_REGISTRY_CREDS=$(ccloud::maybe_create_credentials_resource $SERVICE_ACCOUNT_ID $SCHEMA_REGISTRY)
+  
   if $enable_ksqldb ; then
     KSQLDB_NAME=${KSQLDB_NAME:-"demo-ksqldb-$SERVICE_ACCOUNT_ID"}
-    KSQLDB=$(ccloud::create_ksqldb_app "$KSQLDB_NAME" $CLUSTER)
+    KSQLDB=$(ccloud::maybe_create_ksqldb_app "$KSQLDB_NAME" $CLUSTER)
     KSQLDB_ENDPOINT=$(ccloud ksql app describe $KSQLDB -o json | jq -r ".endpoint")
-    KSQLDB_CREDS=$(ccloud::create_credentials_resource $SERVICE_ACCOUNT_ID $KSQLDB)
+    KSQLDB_CREDS=$(ccloud::maybe_create_credentials_resource $SERVICE_ACCOUNT_ID $KSQLDB)
     ccloud ksql app configure-acls $KSQLDB
   fi
 
   ccloud::create_acls_all_resources_full_access $SERVICE_ACCOUNT_ID
 
-  if [[ -z "$CLIENT_CONFIG" ]]; then
-    mkdir -p stack-configs
-    CLIENT_CONFIG="stack-configs/java-service-account-$SERVICE_ACCOUNT_ID.config"
-  fi
-
   CLOUD_API_KEY=`echo $CLUSTER_CREDS | awk -F: '{print $1}'`
   CLOUD_API_SECRET=`echo $CLUSTER_CREDS | awk -F: '{print $2}'`
   ccloud api-key use $CLOUD_API_KEY --resource ${CLUSTER}
+
+  if [[ -z "$SKIP_CONFIG_FILE_WRITE" ]]; then
+    if [[ -z "$CLIENT_CONFIG" ]]; then
+      mkdir -p stack-configs
+      CLIENT_CONFIG="stack-configs/java-service-account-$SERVICE_ACCOUNT_ID.config"
+    fi
   
-  cat <<EOF > $CLIENT_CONFIG
+    cat <<EOF > $CLIENT_CONFIG
 # --------------------------------------
 # Confluent Cloud connection information
 # --------------------------------------
@@ -855,12 +915,12 @@ function ccloud::create_ccloud_stack() {
 # KAFKA CLUSTER ID: ${CLUSTER}
 # SCHEMA REGISTRY CLUSTER ID: ${SCHEMA_REGISTRY}
 EOF
-  if $enable_ksqldb ; then
-    cat <<EOF >> $CLIENT_CONFIG
+    if $enable_ksqldb ; then
+      cat <<EOF >> $CLIENT_CONFIG
 # KSQLDB APP ID: ${KSQLDB}
 EOF
-  fi
-  cat <<EOF >> $CLIENT_CONFIG
+    fi
+    cat <<EOF >> $CLIENT_CONFIG
 # --------------------------------------
 ssl.endpoint.identification.algorithm=https
 sasl.mechanism=PLAIN
@@ -871,15 +931,16 @@ basic.auth.credentials.source=USER_INFO
 schema.registry.url=${SCHEMA_REGISTRY_ENDPOINT}
 schema.registry.basic.auth.user.info=`echo $SCHEMA_REGISTRY_CREDS | awk -F: '{print $1}'`:`echo $SCHEMA_REGISTRY_CREDS | awk -F: '{print $2}'`
 EOF
-  if $enable_ksqldb ; then
-    cat <<EOF >> $CLIENT_CONFIG
+    if $enable_ksqldb ; then
+      cat <<EOF >> $CLIENT_CONFIG
 ksql.endpoint=${KSQLDB_ENDPOINT}
 ksql.basic.auth.user.info=`echo $KSQLDB_CREDS | awk -F: '{print $1}'`:`echo $KSQLDB_CREDS | awk -F: '{print $2}'`
 EOF
-  fi
+    fi
 
-  echo
-  echo "Client configuration file saved to: $CLIENT_CONFIG"
+    echo
+    echo "Client configuration file saved to: $CLIENT_CONFIG"
+  fi
 
   return 0
 }
