@@ -26,7 +26,7 @@ grep -qxF 'auto.offset.reset=earliest' $CONFLUENT_HOME/etc/ksqldb/ksql-server.pr
 confluent local start
 sleep 5
 
-export BOOTSTRAP_SERVER=localhost:9092
+export BOOTSTRAP_SERVERS=localhost:9092
 export SCHEMA_REGISTRY_URL=http://localhost:8081
 export SQLITE_DB_PATH=${PWD}/db/data/microservices.db
 export ELASTICSEARCH_URL=http://localhost:9200

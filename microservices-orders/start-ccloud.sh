@@ -13,14 +13,25 @@ ccloud::validate_logged_in_ccloud_cli \
 echo
 echo ====== Create new Confluent Cloud stack
 [[ -z "$NO_PROMPT" ]] && ccloud::prompt_continue_ccloud_demo
-ccloud::create_ccloud_stack true
+REPLICATION_FACTOR=3 ccloud::create_ccloud_stack true
 
 SERVICE_ACCOUNT_ID=$(ccloud kafka cluster list -o json | jq -r '.[0].name' | awk -F'-' '{print $4;}')
 if [[ "$SERVICE_ACCOUNT_ID" == "" ]]; then
   echo "ERROR: Could not determine SERVICE_ACCOUNT_ID from 'ccloud kafka cluster list'. Please troubleshoot, destroy stack, and try again to create the stack."
   exit 1
 fi
-CONFIG_FILE=stack-configs/java-service-account-$SERVICE_ACCOUNT_ID.config
+export CONFIG_FILE=stack-configs/java-service-account-$SERVICE_ACCOUNT_ID.config
+
+echo "====== Generating Confluent Cloud configurations"
+../ccloud/ccloud-generate-cp-configs.sh $CONFIG_FILE
+ 
+DELTA_CONFIGS_DIR=delta_configs
+source $DELTA_CONFIGS_DIR/env.delta
+
+echo "====== Creating demo topics"
+./scripts/create-topics-ccloud.sh ./topics.txt
+
+docker-compose -f docker-compose-ccloud.yml up -d --build 
 
 # export CONFIG_FILE=$CONFIG_FILE
 # ccloud::validate_ccloud_config $CONFIG_FILE \
@@ -34,7 +45,7 @@ CONFIG_FILE=stack-configs/java-service-account-$SERVICE_ACCOUNT_ID.config
 # confluent local start
 # sleep 5
 # 
-# export BOOTSTRAP_SERVER=localhost:9092
+# export BOOTSTRAP_SERVERS=localhost:9092
 # export SCHEMA_REGISTRY_URL=http://localhost:8081
 # export SQLITE_DB_PATH=${PWD}/db/data/microservices.db
 # export ELASTICSEARCH_URL=http://localhost:9200

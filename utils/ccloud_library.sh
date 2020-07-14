@@ -835,6 +835,7 @@ function ccloud::set_kafka_cluster_use() {
 
 function ccloud::create_ccloud_stack() {
   QUIET="${QUIET:-true}"
+  REPLICATION_FACTOR=${REPLICATION_FACTOR:-1}
   enable_ksqldb=$1
 
   if [[ -z "$SERVICE_ACCOUNT_ID" ]]; then
@@ -930,6 +931,7 @@ sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule require
 basic.auth.credentials.source=USER_INFO
 schema.registry.url=${SCHEMA_REGISTRY_ENDPOINT}
 schema.registry.basic.auth.user.info=`echo $SCHEMA_REGISTRY_CREDS | awk -F: '{print $1}'`:`echo $SCHEMA_REGISTRY_CREDS | awk -F: '{print $2}'`
+replication.factor=${REPLICATION_FACTOR}
 EOF
     if $enable_ksqldb ; then
       cat <<EOF >> $CLIENT_CONFIG
